@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 
 import voluptuous as vol
-from homeassistant.components.frontend import async_register_built_in_panel
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, SupportsResponse
@@ -146,7 +144,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "No AI agents available. Please configure the integration first."
                 )
                 result = {"error": "No AI agents configured"}
-                hass.bus.async_fire("ai_agent_ha_response", result)
                 return result
 
             provider = call.data.get("provider")
@@ -156,7 +153,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if not available_providers:
                     _LOGGER.error("No AI agents available")
                     result = {"error": "No AI agents configured"}
-                    hass.bus.async_fire("ai_agent_ha_response", result)
                     return result
                 provider = available_providers[0]
                 _LOGGER.debug(f"Using fallback provider: {provider}")
@@ -168,16 +164,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 call.data.get("prompt", ""), provider=provider
             )
             
-            # Fire event for dashboard compatibility
-            hass.bus.async_fire("ai_agent_ha_response", agent_result)
-            
             # Return result for conversation agent - ai_agent_ha returns {'success': True, 'answer': 'text'}
             return agent_result
             
         except Exception as e:
             _LOGGER.error(f"Error processing query: {e}")
             result = {"error": str(e)}
-            hass.bus.async_fire("ai_agent_ha_response", result)
             return result
 
     async def async_handle_create_automation(call):
@@ -207,64 +199,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Error creating automation: {e}")
             return {"error": str(e)}
 
-    async def async_handle_save_prompt_history(call):
-        """Handle the save_prompt_history service call."""
-        try:
-            # Check if agents are available
-            if DOMAIN not in hass.data or not hass.data[DOMAIN].get("agents"):
-                _LOGGER.error(
-                    "No AI agents available. Please configure the integration first."
-                )
-                return {"error": "No AI agents configured"}
-
-            provider = call.data.get("provider")
-            if provider not in hass.data[DOMAIN]["agents"]:
-                # Get the first available provider
-                available_providers = list(hass.data[DOMAIN]["agents"].keys())
-                if not available_providers:
-                    _LOGGER.error("No AI agents available")
-                    return {"error": "No AI agents configured"}
-                provider = available_providers[0]
-                _LOGGER.debug(f"Using fallback provider: {provider}")
-
-            agent = hass.data[DOMAIN]["agents"][provider]
-            user_id = call.context.user_id if call.context.user_id else "default"
-            result = await agent.save_user_prompt_history(
-                user_id, call.data.get("history", [])
-            )
-            return result
-        except Exception as e:
-            _LOGGER.error(f"Error saving prompt history: {e}")
-            return {"error": str(e)}
-
-    async def async_handle_load_prompt_history(call):
-        """Handle the load_prompt_history service call."""
-        try:
-            # Check if agents are available
-            if DOMAIN not in hass.data or not hass.data[DOMAIN].get("agents"):
-                _LOGGER.error(
-                    "No AI agents available. Please configure the integration first."
-                )
-                return {"error": "No AI agents configured"}
-
-            provider = call.data.get("provider")
-            if provider not in hass.data[DOMAIN]["agents"]:
-                # Get the first available provider
-                available_providers = list(hass.data[DOMAIN]["agents"].keys())
-                if not available_providers:
-                    _LOGGER.error("No AI agents available")
-                    return {"error": "No AI agents configured"}
-                provider = available_providers[0]
-                _LOGGER.debug(f"Using fallback provider: {provider}")
-
-            agent = hass.data[DOMAIN]["agents"][provider]
-            user_id = call.context.user_id if call.context.user_id else "default"
-            result = await agent.load_user_prompt_history(user_id)
-            _LOGGER.debug("Load prompt history result: %s", result)
-            return result
-        except Exception as e:
-            _LOGGER.error(f"Error loading prompt history: {e}")
-            return {"error": str(e)}
 
     async def async_handle_create_dashboard(call):
         """Handle the create_dashboard service call."""
@@ -367,19 +301,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.OPTIONAL
     )
     
-    hass.services.async_register(
-        DOMAIN, 
-        "save_prompt_history", 
-        async_handle_save_prompt_history,
-        supports_response=SupportsResponse.OPTIONAL
-    )
-    
-    hass.services.async_register(
-        DOMAIN, 
-        "load_prompt_history", 
-        async_handle_load_prompt_history,
-        supports_response=SupportsResponse.OPTIONAL
-    )
     
     hass.services.async_register(
         DOMAIN, 
@@ -395,42 +316,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.OPTIONAL
     )
 
-    # Register static path for frontend
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                "/frontend/ai_agent_ha",
-                hass.config.path("custom_components/ai_agent_ha/frontend"),
-                False,
-            )
-        ]
-    )
-
-    # Panel registration with proper error handling
-    panel_name = "ai_agent_ha"
-    try:
-        if await _panel_exists(hass, panel_name):
-            _LOGGER.debug("AI Agent HA panel already exists, skipping registration")
-        else:
-            _LOGGER.debug("Registering AI Agent HA panel")
-            async_register_built_in_panel(
-                hass,
-                component_name="custom",
-                sidebar_title="AI Agent HA",
-                sidebar_icon="mdi:robot",
-                frontend_url_path=panel_name,
-                require_admin=False,
-                config={
-                    "_panel_custom": {
-                        "name": "ai_agent_ha-panel",
-                        "module_url": "/frontend/ai_agent_ha/ai_agent_ha-panel.js",
-                        "embed_iframe": False,
-                    }
-                },
-            )
-            _LOGGER.debug("AI Agent HA panel registered successfully")
-    except Exception as e:
-        _LOGGER.warning("Panel registration error: %s", str(e))
 
     # Set up conversation platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -443,14 +328,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
-    if await _panel_exists(hass, "ai_agent_ha"):
-        try:
-            from homeassistant.components.frontend import async_remove_panel
-
-            async_remove_panel(hass, "ai_agent_ha")
-            _LOGGER.debug("AI Agent HA panel removed successfully")
-        except Exception as e:
-            _LOGGER.debug("Error removing panel: %s", str(e))
 
     # Remove services only if this is the last config entry
     remaining_entries = [
@@ -461,8 +338,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not remaining_entries:
         hass.services.async_remove(DOMAIN, "query")
         hass.services.async_remove(DOMAIN, "create_automation")
-        hass.services.async_remove(DOMAIN, "save_prompt_history")
-        hass.services.async_remove(DOMAIN, "load_prompt_history")
         hass.services.async_remove(DOMAIN, "create_dashboard")
         hass.services.async_remove(DOMAIN, "update_dashboard")
 
@@ -483,12 +358,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-async def _panel_exists(hass: HomeAssistant, panel_name: str) -> bool:
-    """Check if a panel already exists."""
-    try:
-        return hasattr(hass.data, "frontend_panels") and panel_name in hass.data.get(
-            "frontend_panels", {}
-        )
-    except Exception as e:
-        _LOGGER.debug("Error checking panel existence: %s", str(e))
-        return False

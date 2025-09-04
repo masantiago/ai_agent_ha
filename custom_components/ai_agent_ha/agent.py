@@ -29,7 +29,6 @@ from typing import Any, Dict, List, Optional, Union
 import aiohttp
 import yaml  # type: ignore[import-untyped]
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_WEATHER_ENTITY, DOMAIN
@@ -730,7 +729,7 @@ class AiAgentHaAgent:
         "content": (
             "You are an AI assistant integrated with Home Assistant.\n"
             "You can request specific data by using only these commands:\n"
-            "- get_entity_state(entity_id): Get state of a specific entity\n"
+            "- get_entity_state(entity_id): Get state of a specific entity. If exact entity_id not found, will search by name/friendly_name automatically\n"
             "- get_entities_by_domain(domain): Get all entities in a domain\n"
             "- get_entities_by_area(area_id): Get all entities in a specific area\n"
             "- get_entities(area_id or area_ids): Get entities by area(s) - supports single area_id or list of area_ids\n"
@@ -840,7 +839,7 @@ class AiAgentHaAgent:
         "content": (
             "You are an AI assistant integrated with Home Assistant.\n"
             "You can request specific data by using only these commands:\n"
-            "- get_entity_state(entity_id): Get state of a specific entity\n"
+            "- get_entity_state(entity_id): Get state of a specific entity. If exact entity_id not found, will search by name/friendly_name automatically\n"
             "- get_entities_by_domain(domain): Get all entities in a domain\n"
             "- get_entities_by_area(area_id): Get all entities in a specific area\n"
             "- get_entities(area_id or area_ids): Get entities by area(s) - supports single area_id or list of area_ids\n"
@@ -1074,14 +1073,58 @@ class AiAgentHaAgent:
                     sanitized[key] = value
         return sanitized
 
+    async def find_entity_by_name(self, search_term: str, domain: str = None) -> Optional[str]:
+        """Find entity by searching friendly names and entity IDs."""
+        search_lower = search_term.lower()
+        candidates = []
+        
+        for state in self.hass.states.async_all():
+            entity_id = state.entity_id
+            
+            # Skip if domain specified and doesn't match
+            if domain and not entity_id.startswith(f"{domain}."):
+                continue
+                
+            # Check friendly name
+            friendly_name = state.attributes.get("friendly_name", "").lower()
+            if search_lower in friendly_name:
+                candidates.append((entity_id, friendly_name))
+                
+            # Check entity ID
+            if search_lower in entity_id.lower():
+                candidates.append((entity_id, entity_id))
+        
+        # Return the best match (prioritize exact matches)
+        if candidates:
+            # Sort by relevance (exact matches first, then contains)
+            candidates.sort(key=lambda x: (
+                0 if search_lower == x[1].lower() else 1,  # Exact friendly name match
+                0 if search_lower == x[0].split('.')[1].lower() else 1,  # Exact entity name match
+                len(x[1])  # Shorter names first
+            ))
+            return candidates[0][0]
+        
+        return None
+
     async def get_entity_state(self, entity_id: str) -> Dict[str, Any]:
         """Get the state of a specific entity."""
         try:
             _LOGGER.debug("Requesting entity state for: %s", entity_id)
             state = self.hass.states.get(entity_id)
             if not state:
-                _LOGGER.warning("Entity not found: %s", entity_id)
-                return {"error": f"Entity {entity_id} not found"}
+                # Try to find entity by name if direct lookup fails
+                domain = entity_id.split('.')[0] if '.' in entity_id else None
+                search_term = entity_id.split('.')[1] if '.' in entity_id else entity_id
+                found_entity = await self.find_entity_by_name(search_term, domain)
+                
+                if found_entity:
+                    _LOGGER.info("Found entity '%s' for search term '%s'", found_entity, entity_id)
+                    state = self.hass.states.get(found_entity)
+                    entity_id = found_entity  # Update entity_id to the found one
+                
+                if not state:
+                    _LOGGER.warning("Entity not found: %s", entity_id)
+                    return {"error": f"Entity {entity_id} not found"}
 
             result = {
                 "entity_id": state.entity_id,
@@ -3218,25 +3261,3 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
             )
             return {"error": f"Error calling service {domain}.{service}: {str(e)}"}
 
-    async def save_user_prompt_history(
-        self, user_id: str, history: List[str]
-    ) -> Dict[str, Any]:
-        """Save user's prompt history to HA storage."""
-        try:
-            store: Store = Store(self.hass, 1, f"ai_agent_ha_history_{user_id}")
-            await store.async_save({"history": history})
-            return {"success": True}
-        except Exception as e:
-            _LOGGER.exception("Error saving prompt history: %s", str(e))
-            return {"error": f"Error saving prompt history: {str(e)}"}
-
-    async def load_user_prompt_history(self, user_id: str) -> Dict[str, Any]:
-        """Load user's prompt history from HA storage."""
-        try:
-            store: Store = Store(self.hass, 1, f"ai_agent_ha_history_{user_id}")
-            data = await store.async_load()
-            history = data.get("history", []) if data else []
-            return {"success": True, "history": history}
-        except Exception as e:
-            _LOGGER.exception("Error loading prompt history: %s", str(e))
-            return {"error": f"Error loading prompt history: {str(e)}", "history": []}

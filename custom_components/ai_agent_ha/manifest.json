@@ -12,7 +12,6 @@
     ],
     "config_flow": true,
     "dependencies": [
-        "http",
         "conversation"
     ],
     "documentation": "https://github.com/sbenodiz/ai_agent_ha",
