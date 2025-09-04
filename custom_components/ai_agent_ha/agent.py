@@ -750,9 +750,9 @@ class AiAgentHaAgent:
             "- get_dashboard_config(dashboard_url): Get configuration of a specific dashboard\n"
             "- set_entity_state(entity_id, state, attributes?): Set state of an entity (e.g., turn on/off lights, open/close covers)\n"
             "- call_service(domain, service, target?, service_data?): Call any Home Assistant service directly\n"
-            "- create_automation(automation): Create a new automation with the provided configuration\n"
             "- create_dashboard(dashboard_config): Create a new dashboard with the provided configuration\n"
             "- update_dashboard(dashboard_url, dashboard_config): Update an existing dashboard configuration\n\n"
+            "IMPORTANT FOR AUTOMATIONS: Do NOT use call_service with automation.create - it doesn't exist. Instead, use automation_suggestion format.\n"
             "You can also create dashboards when users ask for them. When creating dashboards:\n"
             "1. First gather information about available entities, areas, and devices\n"
             "2. Ask follow-up questions if the user's requirements are unclear\n"
@@ -767,7 +767,7 @@ class AiAgentHaAgent:
             "- Use get_entities() with area_ids parameter to get entities from multiple areas efficiently\n"
             "- Example: get_entities(area_ids=['area1', 'area2', 'area3']) for multiple areas at once\n"
             "- This is more efficient than calling get_entities_by_area() multiple times\n\n"
-            "You can also create automations when users ask for them. When you detect that a user wants to create an automation, make sure to request first entities so you know the entity IDs to trigger on. Pay attention that if you want to set specific days in the automation you should use those days: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']\n"
+            "When users ask to create automations, ALWAYS use automation_suggestion format - NEVER use call_service. First request entities to know the entity IDs. For specific days use: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']\n"
             "IMPORTANT: Keep your response concise and focused. Do NOT repeat text or add unnecessary explanations.\n"
             "Respond with a JSON object in this EXACT format:\n"
             "{\n"
@@ -815,8 +815,13 @@ class AiAgentHaAgent:
             "When you have all the data you need, respond with this exact JSON format:\n"
             "{\n"
             '  "request_type": "final_response",\n'
-            '  "response": "your answer to the user"\n'
+            '  "response": "your answer to the user formatted as human-readable text"\n'
             "}\n\n"
+            "IMPORTANT: The 'response' field must ALWAYS contain human-readable text, never raw data!\n"
+            "- If you get lists of entities/automations, format them nicely for the user\n"
+            "- Example: Instead of raw data, write 'You have 5 automations: Light Control (active), Door Lock (inactive)...'\n"
+            "- Use emojis and formatting to make responses user-friendly\n"
+            "- Never put arrays, objects, or raw JSON in the response field\n\n"
             "CRITICAL FORMATTING RULES:\n"
             "- You must ALWAYS respond with ONLY a valid JSON object\n"
             "- DO NOT include any text before the JSON\n"
@@ -855,9 +860,9 @@ class AiAgentHaAgent:
             "- get_dashboard_config(dashboard_url): Get configuration of a specific dashboard\n"
             "- set_entity_state(entity_id, state, attributes?): Set state of an entity (e.g., turn on/off lights, open/close covers)\n"
             "- call_service(domain, service, target?, service_data?): Call any Home Assistant service directly\n"
-            "- create_automation(automation): Create a new automation with the provided configuration\n"
             "- create_dashboard(dashboard_config): Create a new dashboard with the provided configuration\n"
             "- update_dashboard(dashboard_url, dashboard_config): Update an existing dashboard configuration\n\n"
+            "IMPORTANT FOR AUTOMATIONS: Do NOT use call_service with automation.create - it doesn't exist. Instead, use automation_suggestion format.\n"
             "You can also create dashboards when users ask for them. When creating dashboards:\n"
             "1. First gather information about available entities, areas, and devices\n"
             "2. Ask follow-up questions if the user's requirements are unclear\n"
@@ -872,7 +877,7 @@ class AiAgentHaAgent:
             "- Use get_entities() with area_ids parameter to get entities from multiple areas efficiently\n"
             "- Example: get_entities(area_ids=['area1', 'area2', 'area3']) for multiple areas at once\n"
             "- This is more efficient than calling get_entities_by_area() multiple times\n\n"
-            "You can also create automations when users ask for them. When you detect that a user wants to create an automation, make sure to request first entities so you know the entity IDs to trigger on. Pay attention that if you want to set specific days in the automation you should use those days: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']\n"
+            "When users ask to create automations, ALWAYS use automation_suggestion format - NEVER use call_service. First request entities to know the entity IDs. For specific days use: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']\n"
             "IMPORTANT: Keep your response concise and focused. Do NOT repeat text or add unnecessary explanations.\n"
             "Respond with a JSON object in this EXACT format:\n"
             "{\n"
@@ -920,8 +925,13 @@ class AiAgentHaAgent:
             "When you have all the data you need, respond with this exact JSON format:\n"
             "{\n"
             '  "request_type": "final_response",\n'
-            '  "response": "your answer to the user"\n'
+            '  "response": "your answer to the user formatted as human-readable text"\n'
             "}\n\n"
+            "IMPORTANT: The 'response' field must ALWAYS contain human-readable text, never raw data!\n"
+            "- If you get lists of entities/automations, format them nicely for the user\n"
+            "- Example: Instead of raw data, write 'You have 5 automations: Light Control (active), Door Lock (inactive)...'\n"
+            "- Use emojis and formatting to make responses user-friendly\n"
+            "- Never put arrays, objects, or raw JSON in the response field\n\n"
             "CRITICAL FORMATTING RULES:\n"
             "- You must ALWAYS respond with ONLY a valid JSON object\n"
             "- DO NOT include any text before the JSON\n"
@@ -2389,7 +2399,6 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                             "get_dashboards",
                             "get_dashboard_config",
                             "set_entity_state",
-                            "create_automation",
                             "create_dashboard",
                             "update_dashboard",
                         ]
@@ -2543,15 +2552,13 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                                 }
                             )
 
-                            # Return final response
+                            # Return final response with structured format
                             _LOGGER.debug(
                                 "Received final response: %s",
                                 response_data.get("response"),
                             )
-                            result = {
-                                "success": True,
-                                "answer": response_data.get("response", ""),
-                            }
+                            # Return the complete structured response for conversation.py
+                            result = response_data
                             self._set_cached_data(cache_key, result)
                             return result
                         elif (
@@ -2567,15 +2574,13 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                                 }
                             )
 
-                            # Return automation suggestion
+                            # Return automation suggestion with structured format
                             _LOGGER.debug(
                                 "Received automation suggestion: %s",
                                 json.dumps(response_data.get("automation")),
                             )
-                            result = {
-                                "success": True,
-                                "answer": json.dumps(response_data),
-                            }
+                            # Return the complete structured response for conversation.py
+                            result = response_data
                             self._set_cached_data(cache_key, result)
                             return result
                         elif (
@@ -2591,15 +2596,13 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                                 }
                             )
 
-                            # Return dashboard suggestion
+                            # Return dashboard suggestion with structured format
                             _LOGGER.debug(
                                 "Received dashboard suggestion: %s",
                                 json.dumps(response_data.get("dashboard")),
                             )
-                            result = {
-                                "success": True,
-                                "answer": json.dumps(response_data),
-                            }
+                            # Return the complete structured response for conversation.py
+                            result = response_data
                             self._set_cached_data(cache_key, result)
                             return result
                         elif response_data.get("request_type") in [
@@ -2653,6 +2656,31 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                             service = response_data.get("service")
                             target = response_data.get("target", {})
                             service_data = response_data.get("service_data", {})
+                            
+                            # Check for invalid automation.create calls and convert them to automation_suggestion
+                            if domain == "automation" and service == "create":
+                                _LOGGER.warning("AI attempted to use invalid automation.create service call - converting to automation_suggestion format")
+                                
+                                # Convert service_data to automation_suggestion format
+                                automation_data = service_data
+                                
+                                # Create proper automation_suggestion response
+                                converted_response = {
+                                    "request_type": "automation_suggestion",
+                                    "message": "I've created an automation that might help you. Would you like me to create it?",
+                                    "automation": automation_data
+                                }
+                                
+                                # Add to conversation history
+                                self.conversation_history.append({
+                                    "role": "assistant", 
+                                    "content": json.dumps(converted_response)
+                                })
+                                
+                                # Return the converted response
+                                result = converted_response
+                                self._set_cached_data(cache_key, result)
+                                return result
 
                             # Resolve nested requests in target
                             if target and "entity_id" in target:
@@ -2910,10 +2938,8 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                                 "request_type": "final_response",
                                 "response": response_to_wrap,
                             }
-                            result = {
-                                "success": True,
-                                "answer": json.dumps(wrapped_response),
-                            }
+                            # Return structured response directly
+                            result = wrapped_response
                             _LOGGER.debug("Wrapped non-JSON response as final_response")
                         except Exception as wrap_error:
                             _LOGGER.error(
@@ -3156,6 +3182,11 @@ Then restart Home Assistant to see your new dashboard in the sidebar."""
                 call_data.update(service_data)
 
             _LOGGER.debug("Final service call data: %s", json.dumps(call_data))
+
+            # Check for invalid automation.create calls
+            if domain == "automation" and service == "create":
+                _LOGGER.error("Invalid automation.create service call detected - automation.create service does not exist")
+                return {"error": "automation.create service does not exist. Use automation_suggestion format instead."}
 
             # Call the service
             await self.hass.services.async_call(domain, service, call_data)

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from abc import ABC, abstractmethod
+from typing import Any, Dict
 
 from homeassistant.components import conversation
+from homeassistant.components.conversation import ConversationEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -15,6 +17,16 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Official response types defined in agent.py SYSTEM_PROMPT
+OFFICIAL_REQUEST_TYPES = {
+    "FINAL_RESPONSE": "final_response",
+    "AUTOMATION_SUGGESTION": "automation_suggestion", 
+    "DASHBOARD_SUGGESTION": "dashboard_suggestion",
+    "DATA_REQUEST": "data_request",
+    "CALL_SERVICE": "call_service"
+}
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -23,6 +35,270 @@ async def async_setup_entry(
     """Set up conversation agent from a config entry."""
     agent = AIAgentConversation(hass, config_entry)
     async_add_entities([agent])
+
+
+# Official Response Handler Classes based on agent.py specification
+class BaseResponseHandler(ABC):
+    """Base class for handling official agent response types."""
+    
+    def __init__(self, hass: HomeAssistant, integration_data: Dict[str, Any]):
+        self.hass = hass
+        self.integration_data = integration_data
+    
+    @abstractmethod
+    def get_request_type(self) -> str:
+        """Return the official request_type this handler processes."""
+        pass
+    
+    def can_handle(self, result: Dict[str, Any]) -> bool:
+        """Check if this handler can process the result based on request_type."""
+        return result.get("request_type") == self.get_request_type()
+    
+    @abstractmethod
+    async def handle(self, result: Dict[str, Any]) -> str:
+        """Handle the result and return formatted response."""
+        pass
+
+
+class FinalResponseHandler(BaseResponseHandler):
+    """Handler for final_response type - the definitive answer from AI."""
+    
+    def get_request_type(self) -> str:
+        return OFFICIAL_REQUEST_TYPES["FINAL_RESPONSE"]
+    
+    async def handle(self, result: Dict[str, Any]) -> str:
+        """Extract response content directly - this is the final formatted answer."""
+        return result.get("response", "No response content")
+
+
+class AutomationSuggestionHandler(BaseResponseHandler):
+    """Handler for automation_suggestion type - official format from agent."""
+    
+    def __init__(self, hass: HomeAssistant, integration_data: Dict[str, Any]):
+        super().__init__(hass, integration_data)
+        self._pending_automation = None
+    
+    def get_request_type(self) -> str:
+        return OFFICIAL_REQUEST_TYPES["AUTOMATION_SUGGESTION"]
+    
+    async def handle(self, result: Dict[str, Any]) -> str:
+        """Handle automation suggestion according to official format."""
+        # Official format: {"request_type": "automation_suggestion", "message": "...", "automation": {...}}
+        message = result.get("message", "I've created an automation suggestion.")
+        automation = result.get("automation")
+        
+        if not automation:
+            return message
+        
+        # Store for confirmation
+        self._pending_automation = automation
+        
+        # Format according to official structure
+        alias = automation.get("alias", "Unknown Automation")
+        description = automation.get("description", "")
+        
+        response = f"{message}\n\n**{alias}**"
+        if description:
+            response += f"\n{description}"
+        
+        response += "\n\nSay 'yes' or 'create it' to create this automation."
+        return response
+    
+    async def handle_confirmation(self) -> str:
+        """Create the pending automation."""
+        if not self._pending_automation:
+            return "No automation to create."
+        
+        try:
+            result = await self.hass.services.async_call(
+                DOMAIN, "create_automation",
+                {"automation": self._pending_automation},
+                blocking=True, return_response=True
+            )
+            
+            self._pending_automation = None  # Clear after attempt
+            
+            if result and result.get("success"):
+                return "Automation created successfully!"
+            else:
+                error = result.get("error", "Unknown error") if result else "No response"
+                return f"Error creating automation: {error}"
+                
+        except Exception as e:
+            _LOGGER.error("Error creating automation: %s", e)
+            return f"Error creating automation: {e}"
+    
+    def has_pending_confirmation(self) -> bool:
+        return self._pending_automation is not None
+
+
+class DashboardSuggestionHandler(BaseResponseHandler):
+    """Handler for dashboard_suggestion type - official format from agent."""
+    
+    def __init__(self, hass: HomeAssistant, integration_data: Dict[str, Any]):
+        super().__init__(hass, integration_data)
+        self._pending_dashboard = None
+    
+    def get_request_type(self) -> str:
+        return OFFICIAL_REQUEST_TYPES["DASHBOARD_SUGGESTION"]
+    
+    async def handle(self, result: Dict[str, Any]) -> str:
+        """Handle dashboard suggestion according to official format."""
+        # Official format: {"request_type": "dashboard_suggestion", "message": "...", "dashboard": {...}}
+        message = result.get("message", "I've created a dashboard suggestion.")
+        dashboard = result.get("dashboard")
+        
+        if not dashboard:
+            return message
+        
+        # Store for confirmation
+        self._pending_dashboard = dashboard
+        
+        title = dashboard.get("title", "Dashboard")
+        response = f"{message}\n\n**{title}**"
+        response += "\n\nSay 'yes' or 'create it' to create this dashboard."
+        return response
+    
+    async def handle_confirmation(self) -> str:
+        """Create the pending dashboard."""
+        if not self._pending_dashboard:
+            return "No dashboard to create."
+        
+        try:
+            result = await self.hass.services.async_call(
+                DOMAIN, "create_dashboard",
+                {"dashboard_config": self._pending_dashboard},
+                blocking=True, return_response=True
+            )
+            
+            self._pending_dashboard = None  # Clear after attempt
+            
+            if result and result.get("success"):
+                return "Dashboard created successfully!"
+            else:
+                error = result.get("error", "Unknown error") if result else "No response"
+                return f"Error creating dashboard: {error}"
+                
+        except Exception as e:
+            _LOGGER.error("Error creating dashboard: %s", e)
+            return f"Error creating dashboard: {e}"
+    
+    def has_pending_confirmation(self) -> bool:
+        return self._pending_dashboard is not None
+
+
+class DataRequestHandler(BaseResponseHandler):
+    """Handler for data_request type - requests for HA data."""
+    
+    def get_request_type(self) -> str:
+        return OFFICIAL_REQUEST_TYPES["DATA_REQUEST"]
+    
+    async def handle(self, result: Dict[str, Any]) -> str:
+        """This should not happen - data_request is processed by agent.py directly."""
+        # If we see this, it means the agent didn't process the data request properly
+        _LOGGER.warning("Received unprocessed data_request: %s", result)
+        return "Data request was not processed properly by the agent."
+
+
+class CallServiceHandler(BaseResponseHandler):
+    """Handler for call_service type - service execution requests."""
+    
+    def get_request_type(self) -> str:
+        return OFFICIAL_REQUEST_TYPES["CALL_SERVICE"]
+    
+    async def handle(self, result: Dict[str, Any]) -> str:
+        """This should not happen - call_service is processed by agent.py directly."""
+        # If we see this, it means the agent didn't process the service call properly
+        _LOGGER.warning("Received unprocessed call_service: %s", result)
+        return "Service call was not processed properly by the agent."
+
+
+class AgentResponseProcessor:
+    """Response processor based on agent.py specifications."""
+    
+    def __init__(self, hass: HomeAssistant, integration_data: Dict[str, Any]):
+        self.hass = hass
+        self.integration_data = integration_data
+        
+        # Initialize handlers for confirmations
+        self.automation_handler = AutomationSuggestionHandler(hass, integration_data)
+        self.dashboard_handler = DashboardSuggestionHandler(hass, integration_data)
+        
+        # Agent response handlers in order
+        self.handlers = [
+            FinalResponseHandler(hass, integration_data),
+            self.automation_handler,
+            self.dashboard_handler,
+            DataRequestHandler(hass, integration_data),
+            CallServiceHandler(hass, integration_data)
+        ]
+    
+    async def process_response(self, result: Any) -> str:
+        """Process response using official agent format specifications."""
+        if not isinstance(result, dict):
+            return str(result) if result else "No response received"
+        
+        # Check for error first
+        if "error" in result:
+            return f"Error: {result['error']}"
+        
+        # Check if we have a valid request_type
+        request_type = result.get("request_type")
+        if not request_type:
+            _LOGGER.warning("Received response without request_type: %s", result)
+            return self._handle_malformed_response(result)
+        
+        # Find appropriate handler for this request_type
+        for handler in self.handlers:
+            if handler.can_handle(result):
+                try:
+                    return await handler.handle(result)
+                except Exception as e:
+                    _LOGGER.error("Handler %s failed: %s", handler.__class__.__name__, e)
+                    return f"Error processing {request_type}: {e}"
+        
+        # Unknown request_type
+        _LOGGER.warning("Unknown request_type: %s", request_type)
+        return f"Unknown response type: {request_type}"
+    
+    def _handle_malformed_response(self, result: Dict[str, Any]) -> str:
+        """Handle responses that don't follow official format."""
+        # This should ideally not happen with a well-configured agent
+        _LOGGER.warning("Malformed response (missing request_type): %s", result)
+        
+        # Try to extract useful information
+        if "answer" in result:
+            return str(result["answer"])
+        elif "message" in result:
+            return str(result["message"])
+        elif "response" in result:
+            return str(result["response"])
+        else:
+            return "Received malformed response from agent"
+    
+    def has_pending_automation(self) -> bool:
+        return self.automation_handler.has_pending_confirmation()
+    
+    def has_pending_dashboard(self) -> bool:
+        return self.dashboard_handler.has_pending_confirmation()
+    
+    async def handle_automation_confirmation(self) -> str:
+        return await self.automation_handler.handle_confirmation()
+    
+    async def handle_dashboard_confirmation(self) -> str:
+        return await self.dashboard_handler.handle_confirmation()
+    
+    def has_any_pending_confirmation(self) -> bool:
+        return self.has_pending_automation() or self.has_pending_dashboard()
+    
+    async def handle_confirmation(self) -> str:
+        """Handle any type of pending confirmation."""
+        if self.has_pending_automation():
+            return await self.handle_automation_confirmation()
+        elif self.has_pending_dashboard():
+            return await self.handle_dashboard_confirmation()
+        else:
+            return "No pending confirmations."
 
 
 class AIAgentConversation(conversation.ConversationEntity):
@@ -37,12 +313,20 @@ class AIAgentConversation(conversation.ConversationEntity):
         
         # Get reference to the existing AI agent data
         self._integration_data = hass.data[DOMAIN][config_entry.entry_id]
-        self._last_automation_suggestion = None  # Store last automation for confirmation
+        
+        # Initialize agent response processor
+        self._response_processor = AgentResponseProcessor(hass, self._integration_data)
 
     @property
     def supported_languages(self) -> list[str] | str:
-        """Return supported languages."""
-        return ["en", "es", "fr", "de", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko"]
+        """Return supported languages - major languages supported by AI providers."""
+        # Return common languages that work well with major AI providers
+        return ["en", "es", "fr", "de", "it", "pt"]
+
+    @property
+    def supported_features(self) -> ConversationEntityFeature:
+        """Return supported features."""
+        return ConversationEntityFeature.CONTROL
 
     @property
     def attribution(self) -> str:
@@ -55,45 +339,7 @@ class AIAgentConversation(conversation.ConversationEntity):
     ) -> conversation.ConversationResult:
         """Process a conversation input."""
         try:
-            # Check if user is confirming an automation creation
-            user_text = user_input.text.lower().strip()
-            confirmation_phrases = [
-                "yes", "sí", "si", "approve", "create it", "créala", "create the automation", 
-                "crea la automatización", "confirm", "confirma", "ok", "vale", "adelante"
-            ]
-            
-            is_confirmation = any(phrase in user_text for phrase in confirmation_phrases)
-            is_short = len(user_text.split()) <= 3  # Short responses are likely confirmations
-            
-            # If user is confirming and we have a stored automation, try to create it
-            if is_confirmation and is_short and self._last_automation_suggestion:
-                _LOGGER.warning("DEBUG CONV: User confirming automation, attempting to create")
-                try:
-                    create_result = await self.hass.services.async_call(
-                        DOMAIN,
-                        "create_automation",
-                        {"automation": self._last_automation_suggestion},
-                        blocking=True,
-                        return_response=True
-                    )
-                    
-                    _LOGGER.warning("DEBUG CONV: Create automation result: %s", create_result)
-                    
-                    if create_result and create_result.get("success"):
-                        response = "Automation created successfully!"
-                    else:
-                        error_msg = create_result.get("error", "Unknown error") if create_result else "No response"
-                        response = f"Error creating automation: {error_msg}"
-                    
-                    # Clear the stored automation
-                    self._last_automation_suggestion = None
-                    
-                except Exception as create_error:
-                    _LOGGER.error("Error creating automation: %s", create_error)
-                    response = f"Error creating automation: {create_error}"
-            else:
-                # Normal processing
-                response = await self._process_with_ai_agent(user_input.text)
+            response = await self._process_user_input(user_input.text)
             
             intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_speech(response)
@@ -114,6 +360,39 @@ class AIAgentConversation(conversation.ConversationEntity):
                 response=intent_response, 
                 conversation_id=user_input.conversation_id
             )
+    
+    async def _process_user_input(self, user_text: str) -> str:
+        """Process user input and return appropriate response."""
+        # Check for pending confirmations first
+        user_lower = user_text.lower().strip()
+        
+        _LOGGER.debug("Processing user input: '%s'", user_text)
+        _LOGGER.debug("Has pending automation: %s", self._response_processor.automation_handler.has_pending_confirmation())
+        _LOGGER.debug("Has pending dashboard: %s", self._response_processor.dashboard_handler.has_pending_confirmation())
+        
+        # Check for automation confirmation
+        if self._response_processor.automation_handler.has_pending_confirmation():
+            _LOGGER.debug("Found pending automation, checking for confirmation keywords")
+            if user_lower in ['yes', 'create it', 'sí', 'si', 'crear', 'creala', 'créala']:
+                _LOGGER.debug("Confirmed - creating automation")
+                return await self._response_processor.automation_handler.handle_confirmation()
+            elif user_lower in ['no', 'cancel', 'cancelar', 'no gracias']:
+                _LOGGER.debug("Cancelled - clearing pending automation")
+                # Clear pending automation
+                self._response_processor.automation_handler._pending_automation = None
+                return "Automation creation cancelled."
+        
+        # Check for dashboard confirmation  
+        if self._response_processor.dashboard_handler.has_pending_confirmation():
+            if user_lower in ['yes', 'create it', 'sí', 'si', 'crear', 'crealo', 'créalo']:
+                return await self._response_processor.dashboard_handler.handle_confirmation()
+            elif user_lower in ['no', 'cancel', 'cancelar', 'no gracias']:
+                # Clear pending dashboard
+                self._response_processor.dashboard_handler._pending_dashboard = None
+                return "Dashboard creation cancelled."
+        
+        # No pending confirmations, process with AI agent
+        return await self._process_with_ai_agent(user_text)
 
     async def _process_with_ai_agent(self, message: str) -> str:
         """Process message using the existing AI Agent HA service."""
@@ -127,196 +406,10 @@ class AIAgentConversation(conversation.ConversationEntity):
                 return_response=True
             )
             
-            # Debug what we received
-            _LOGGER.warning("DEBUG CONV: Received result type: %s", type(result))
-            _LOGGER.warning("DEBUG CONV: Received result keys: %s", list(result.keys()) if isinstance(result, dict) else "not dict")
-            if isinstance(result, dict) and "request_type" in result:
-                _LOGGER.warning("DEBUG CONV: Found request_type: %s", result["request_type"])
+            _LOGGER.debug("AI Agent service result: %s", result)
             
-            # Extract response from service result - handle the actual ai_agent_ha structure
-            if isinstance(result, dict):
-                # Check for error first
-                if "error" in result:
-                    return f"Error: {result['error']}"
-                
-                # Handle different request types FIRST (most specific)
-                if "request_type" in result:
-                    request_type = result["request_type"]
-                    _LOGGER.warning("DEBUG CONV: Processing request_type: %s", request_type)
-                    
-                    if request_type == "final_response":
-                        # Handle final responses - this is the clean answer
-                        response_content = result.get("response", result.get("message", "Response received"))
-                        _LOGGER.warning("DEBUG CONV: Final response content type: %s", type(response_content))
-                        
-                        # Check if the final response is a list (like automations list)
-                        if isinstance(response_content, list):
-                            _LOGGER.warning("DEBUG CONV: Final response is a list, formatting...")
-                            return self._format_list_response(response_content)
-                        else:
-                            _LOGGER.warning("DEBUG CONV: Returning final_response as string: %s", response_content)
-                            return str(response_content)
-                    
-                    elif request_type == "automation_suggestion":
-                        # For automation suggestions, format nicely and store for potential creation
-                        _LOGGER.warning("DEBUG CONV: Processing automation_suggestion")
-                        message_text = result.get("message", "I've created an automation suggestion.")
-                        
-                        if "automation" in result:
-                            automation = result["automation"]
-                            # Store for potential confirmation
-                            self._last_automation_suggestion = automation
-                            
-                            alias = automation.get("alias", "Unknown automation")
-                            description = automation.get("description", "")
-                            
-                            # Create a more natural response
-                            response = f"{message_text}\n\n**{alias}**"
-                            if description:
-                                response += f"\n{description}"
-                            
-                            # Add trigger info if available
-                            if "trigger" in automation and automation["trigger"]:
-                                trigger = automation["trigger"][0]  # Get first trigger
-                                if trigger.get("platform") == "time":
-                                    response += f"\n\nTrigger: Daily at {trigger.get('at', 'unknown time')}"
-                                elif trigger.get("platform") == "state":
-                                    entity = trigger.get("entity_id", "entity")
-                                    response += f"\nTrigger: When {entity} changes"
-                                elif trigger.get("platform") == "device":
-                                    response += f"\nTrigger: Device trigger"
-                            
-                            # Add action info
-                            if "action" in automation and automation["action"]:
-                                action = automation["action"][0]  # Get first action
-                                if "service" in action:
-                                    service = action["service"]
-                                    target = action.get("target", {}).get("entity_id", "entity")
-                                    response += f"\nAction: {service} on {target}"
-                            
-                            response += "\n\nSay 'yes' or 'create it' to create this automation, or 'no' to cancel."
-                            
-                            _LOGGER.warning("DEBUG CONV: Returning formatted automation suggestion")
-                            return response
-                        else:
-                            return message_text
-                    
-                    elif request_type == "data_request":
-                        # Handle data requests
-                        return result.get("message", result.get("answer", "Data request processed"))
-                    
-                    elif request_type == "action_request":
-                        # Handle action requests
-                        return result.get("message", result.get("answer", "Action completed"))
-                    
-                    else:
-                        # Unknown request type, try to get message or answer
-                        return result.get("message", result.get("answer", f"Processed {request_type}"))
-                
-                # ai_agent_ha standard response structure (fallback)
-                elif "answer" in result:
-                    answer = result["answer"]
-                    _LOGGER.warning("DEBUG CONV: Found answer field, type: %s", type(answer))
-                    
-                    # Check if answer is a JSON string that needs parsing
-                    if isinstance(answer, str) and answer.strip().startswith("{"):
-                        _LOGGER.warning("DEBUG CONV: Answer looks like JSON string, attempting to parse...")
-                        try:
-                            import json
-                            parsed_answer = json.loads(answer)
-                            _LOGGER.warning("DEBUG CONV: Successfully parsed JSON, type: %s", type(parsed_answer))
-                            
-                            # Now handle the parsed object
-                            if isinstance(parsed_answer, dict):
-                                if parsed_answer.get("request_type") == "automation_suggestion":
-                                    # Store automation for potential creation
-                                    if "automation" in parsed_answer:
-                                        self._last_automation_suggestion = parsed_answer["automation"]
-                                    return self._format_automation_suggestion(parsed_answer)
-                                else:
-                                    return self._format_dict_response(parsed_answer)
-                            elif isinstance(parsed_answer, list):
-                                return self._format_list_response(parsed_answer)
-                            else:
-                                return str(parsed_answer)
-                                
-                        except json.JSONDecodeError:
-                            _LOGGER.warning("DEBUG CONV: Failed to parse as JSON, treating as string")
-                            return str(answer)
-                    
-                    # Check if answer is already a list (like automations list)
-                    elif isinstance(answer, list):
-                        _LOGGER.warning("DEBUG CONV: Answer is a list, formatting...")
-                        return self._format_list_response(answer)
-                    # Check if answer is a dict (like single entity info)
-                    elif isinstance(answer, dict):
-                        _LOGGER.warning("DEBUG CONV: Answer is a dict, formatting...")
-                        return self._format_single_entity_response(answer)
-                    else:
-                        _LOGGER.warning("DEBUG CONV: Answer is string/other: %s", answer)
-                        return str(answer)
-                
-                # Check if it's a success response with answer
-                elif result.get("success") and "answer" in result:
-                    answer = result["answer"]
-                    _LOGGER.warning("DEBUG CONV: Found success+answer, type: %s", type(answer))
-                    
-                    # Handle JSON string in success response too
-                    if isinstance(answer, str) and answer.strip().startswith("{"):
-                        try:
-                            import json
-                            parsed_answer = json.loads(answer)
-                            if isinstance(parsed_answer, dict) and parsed_answer.get("request_type") == "automation_suggestion":
-                                if "automation" in parsed_answer:
-                                    self._last_automation_suggestion = parsed_answer["automation"]
-                                return self._format_automation_suggestion(parsed_answer)
-                            else:
-                                return self._format_dict_response(parsed_answer)
-                        except json.JSONDecodeError:
-                            return str(answer)
-                    elif isinstance(answer, list):
-                        return self._format_list_response(answer)
-                    elif isinstance(answer, dict):
-                        return self._format_single_entity_response(answer)
-                    else:
-                        return str(answer)
-                
-                # Look for other common response fields
-                else:
-                    response_fields = [
-                        "response", "text", "message", "content", "result", "output", 
-                        "reply", "final_response", "ai_response"
-                    ]
-                    
-                    for key in response_fields:
-                        if key in result and result[key]:
-                            response_value = result[key]
-                            
-                            # If the response is also a dict, try to extract text from it
-                            if isinstance(response_value, dict):
-                                for subkey in ["text", "content", "message", "response", "answer"]:
-                                    if subkey in response_value:
-                                        return str(response_value[subkey])
-                                # If dict but no text fields, convert to readable string
-                                return self._format_dict_response(response_value)
-                            
-                            return str(response_value)
-                    
-                    # If no standard response fields found, format as readable text
-                    _LOGGER.warning("DEBUG CONV: No standard response fields found. Available keys: %s", list(result.keys()))
-                    return self._format_dict_response(result)
-                
-            elif isinstance(result, list):
-                # Handle direct list responses
-                return self._format_list_response(result)
-                
-            elif isinstance(result, str) and result.strip():
-                return result
-            elif result is not None:
-                return str(result)
-            else:
-                # Try direct access as fallback
-                return await self._direct_ai_call(message)
+            # Use response processor to handle the result
+            return await self._response_processor.process_response(result)
                 
         except Exception as service_error:
             _LOGGER.error("Error calling ai_agent_ha.query service: %s", service_error)
@@ -328,261 +421,9 @@ class AIAgentConversation(conversation.ConversationEntity):
                 _LOGGER.error("Error with direct AI call: %s", direct_error)
                 raise HomeAssistantError(f"Unable to process request: {service_error}")
 
-    def _format_automation_suggestion(self, suggestion_data: dict) -> str:
-        """Format an automation suggestion into readable text."""
-        try:
-            message_text = suggestion_data.get("message", "I've created an automation suggestion.")
-            
-            if "automation" in suggestion_data:
-                automation = suggestion_data["automation"]
-                alias = automation.get("alias", "Unknown automation")
-                description = automation.get("description", "")
-                
-                # Create a more natural response
-                response = f"{message_text}\n\n**{alias}**"
-                if description:
-                    response += f"\n{description}"
-                
-                # Add trigger info if available
-                if "trigger" in automation and automation["trigger"]:
-                    trigger = automation["trigger"][0]  # Get first trigger
-                    if trigger.get("platform") == "time":
-                        response += f"\n\nTrigger: Daily at {trigger.get('at', 'unknown time')}"
-                    elif trigger.get("platform") == "state":
-                        entity = trigger.get("entity_id", "entity")
-                        response += f"\nTrigger: When {entity} changes"
-                    elif trigger.get("platform") == "device":
-                        response += f"\nTrigger: Device trigger"
-                
-                # Add action info
-                if "action" in automation and automation["action"]:
-                    action = automation["action"][0]  # Get first action
-                    if "service" in action:
-                        service = action["service"]
-                        target = action.get("target", {}).get("entity_id", "entity")
-                        response += f"\nAction: {service} on {target}"
-                
-                response += "\n\nSay 'yes' or 'create it' to create this automation, or 'no' to cancel."
-                
-                return response
-            else:
-                return message_text
-                
-        except Exception as e:
-            _LOGGER.error("Error formatting automation suggestion: %s", e)
-            return str(suggestion_data)
 
-    def _format_single_entity_response(self, entity_data: dict) -> str:
-        """Format a single entity response into readable text."""
-        try:
-            _LOGGER.warning("DEBUG CONV: Formatting single entity: %s", entity_data)
-            
-            # Check if it's entity information
-            if "entity_id" in entity_data and "state" in entity_data:
-                entity_id = entity_data["entity_id"]
-                state = entity_data["state"]
-                friendly_name = entity_data.get("friendly_name") or entity_data.get("attributes", {}).get("friendly_name", entity_id)
-                
-                # Format based on entity type
-                domain = entity_id.split(".")[0] if "." in entity_id else "unknown"
-                
-                if domain == "switch":
-                    state_text = "on" if state == "on" else "off"
-                    return f"The {friendly_name} switch is {state_text}."
-                elif domain == "light":
-                    state_text = "on" if state == "on" else "off"
-                    return f"The {friendly_name} light is {state_text}."
-                elif domain == "sensor":
-                    unit = entity_data.get("attributes", {}).get("unit_of_measurement", "")
-                    return f"The {friendly_name} sensor reads {state}{' ' + unit if unit else ''}."
-                elif domain == "binary_sensor":
-                    state_text = "active" if state == "on" else "inactive"
-                    return f"The {friendly_name} sensor is {state_text}."
-                elif domain == "climate":
-                    temp = entity_data.get("attributes", {}).get("current_temperature", state)
-                    return f"The {friendly_name} thermostat is at {temp}°."
-                else:
-                    return f"The {friendly_name} is {state}."
-            
-            # If it's not entity data, try to format it generically
-            else:
-                return self._format_dict_response(entity_data)
-                
-        except Exception as e:
-            _LOGGER.error("Error formatting single entity response: %s", e)
-            return f"Entity information: {entity_data}"
 
-    def _format_list_response(self, data_list: list) -> str:
-        """Format a list response into readable text."""
-        try:
-            if not data_list:
-                return "No items found."
-            
-            _LOGGER.warning("DEBUG CONV: Formatting list of %d items", len(data_list))
-            _LOGGER.warning("DEBUG CONV: First item keys: %s", list(data_list[0].keys()) if data_list and isinstance(data_list[0], dict) else "not dict")
-            
-            # Check if it's a list of automations (has entity_id starting with automation.)
-            if all(isinstance(item, dict) and "friendly_name" in item for item in data_list):
-                # Check if they are automations by entity_id or if they have automation-like fields
-                has_automation_entity = any(
-                    item.get("entity_id", "").startswith("automation.") 
-                    for item in data_list 
-                    if "entity_id" in item
-                )
-                has_state = any("state" in item for item in data_list)
-                
-                if has_automation_entity or has_state:
-                    # It's a list of automations
-                    response = f"Here are your {len(data_list)} automations:\n\n"
-                    
-                    for i, automation in enumerate(data_list, 1):
-                        name = automation.get("friendly_name", "Unknown")
-                        state = automation.get("state", "unknown")
-                        
-                        # Try multiple time fields
-                        last_time = (
-                            automation.get("last_triggered") or 
-                            automation.get("last_changed") or 
-                            automation.get("last_updated") or 
-                            "never"
-                        )
-                        
-                        # Format last activity time
-                        if last_time and last_time != "never":
-                            try:
-                                from datetime import datetime
-                                if isinstance(last_time, str) and "T" in last_time:
-                                    dt = datetime.fromisoformat(last_time.replace('Z', '+00:00'))
-                                    last_time = dt.strftime("%m-%d at %H:%M")
-                                else:
-                                    last_time = str(last_time)[:16]  # Truncate if too long
-                            except Exception as e:
-                                _LOGGER.debug("Error parsing datetime %s: %s", last_time, e)
-                                last_time = "unknown"
-                        
-                        status_emoji = "✅" if state == "on" else "❌"
-                        response += f"{i}. {status_emoji} **{name}**\n"
-                        response += f"   State: {state.title()}\n"
-                        if last_time and last_time != "never":
-                            response += f"   Last activity: {last_time}\n"
-                        response += "\n"
-                    
-                    final_response = response.strip()
-                    _LOGGER.warning("DEBUG CONV: Returning automation list, length: %d", len(final_response))
-                    return final_response
-                else:
-                    # List of entities but not automations
-                    response = f"Found {len(data_list)} entities:\n\n"
-                    
-                    for i, entity in enumerate(data_list, 1):
-                        name = entity.get("friendly_name", entity.get("name", f"Item {i}"))
-                        state = entity.get("state", "unknown")
-                        response += f"{i}. **{name}**: {state}\n"
-                    
-                    return response.strip()
-            
-            # Check if it's a list of other entities
-            elif all(isinstance(item, dict) and "entity_id" in item for item in data_list):
-                response = f"Found {len(data_list)} entities:\n\n"
-                
-                for i, entity in enumerate(data_list, 1):
-                    entity_id = entity.get("entity_id", "unknown")
-                    state = entity.get("state", "unknown")
-                    friendly_name = entity.get("friendly_name") or entity.get("attributes", {}).get("friendly_name", entity_id)
-                    
-                    response += f"{i}. **{friendly_name}**: {state}\n"
-                
-                return response.strip()
-            
-            # Generic list formatting - ensure we always return a string
-            else:
-                response = f"Found {len(data_list)} items:\n\n"
-                
-                for i, item in enumerate(data_list, 1):
-                    if isinstance(item, dict):
-                        # Try to find a meaningful display field
-                        display_value = (
-                            item.get("name") or 
-                            item.get("friendly_name") or 
-                            item.get("title") or 
-                            item.get("alias") or
-                            str(item)[:50]  # Limit length for safety
-                        )
-                        response += f"{i}. {display_value}\n"
-                    else:
-                        response += f"{i}. {str(item)[:50]}\n"  # Limit length for safety
-                
-                return response.strip()
-                
-        except Exception as e:
-            _LOGGER.error("Error formatting list response: %s", e)
-            # ALWAYS return a string, never None
-            return f"Found {len(data_list)} items. Error formatting: {str(e)}"
 
-    def _format_dict_response(self, data: dict) -> str:
-        """Format a dictionary response into readable text."""
-        try:
-            # Handle automation suggestions specifically
-            if data.get("request_type") == "automation_suggestion":
-                message = data.get("message", "I've created an automation suggestion.")
-                
-                if "automation" in data:
-                    automation = data["automation"]
-                    alias = automation.get("alias", "Unknown automation")
-                    description = automation.get("description", "")
-                    
-                    response = f"{message}\n\n**{alias}**"
-                    if description:
-                        response += f"\n{description}"
-                    
-                    return response
-                else:
-                    return message
-            
-            # If it looks like an entity state response
-            elif "entity_id" in data and "state" in data:
-                entity_id = data["entity_id"]
-                state = data["state"]
-                friendly_name = data.get("attributes", {}).get("friendly_name", entity_id)
-                return f"{friendly_name} is {state}"
-            
-            # If it contains automation or action info
-            elif "automation" in data or "action" in data:
-                return "I've processed your automation request successfully."
-            
-            # If it contains dashboard info
-            elif "dashboard" in data or "url" in data:
-                return "I've created/updated the dashboard successfully."
-            
-            # Handle success responses
-            elif "success" in data and data["success"]:
-                if "answer" in data:
-                    return str(data["answer"])
-                elif "message" in data:
-                    return str(data["message"])
-                else:
-                    return "Request completed successfully."
-            
-            # Generic formatting for other dict responses
-            elif len(data) == 1:
-                key, value = next(iter(data.items()))
-                return f"{key}: {value}"
-            
-            # For complex dicts, create a readable summary
-            else:
-                summary_parts = []
-                for key, value in data.items():
-                    if key not in ["timestamp", "id", "metadata", "request_type"]:  # Skip technical fields
-                        if isinstance(value, str) and len(value) < 200:  # Reasonable length
-                            summary_parts.append(f"{key}: {value}")
-                        elif not isinstance(value, dict):  # Skip complex nested objects
-                            summary_parts.append(f"{key}: {value}")
-                
-                return "; ".join(summary_parts) if summary_parts else "Request processed successfully."
-            
-        except Exception as e:
-            _LOGGER.error("Error formatting dict response: %s", e)
-            return str(data)
 
     async def _direct_ai_call(self, message: str) -> str:
         """Direct call to AI client as fallback."""
@@ -593,20 +434,8 @@ class AIAgentConversation(conversation.ConversationEntity):
                 provider = self._integration_data.get("provider", "openai")
                 direct_result = await agent.process_query(message, provider=provider)
                 
-                # Format the direct result the same way
-                if isinstance(direct_result, dict):
-                    if "request_type" in direct_result and direct_result["request_type"] == "automation_suggestion":
-                        return "I've created an automation suggestion. Please check the AI Agent HA dashboard to review and create it."
-                    elif "answer" in direct_result:
-                        return str(direct_result["answer"])
-                    elif "response" in direct_result:
-                        return str(direct_result["response"])
-                    else:
-                        return self._format_dict_response(direct_result)
-                elif isinstance(direct_result, list):
-                    return self._format_list_response(direct_result)
-                else:
-                    return str(direct_result)
+                # Use response processor to handle direct result as well
+                return await self._response_processor.process_response(direct_result)
             else:
                 raise HomeAssistantError("No AI agent found in integration data")
                 
