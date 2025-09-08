@@ -42,23 +42,6 @@ The agent will respond to user messages with one of the following JSON response 
 }
 ```
 
-**dashboard_suggestion**: Suggest dashboard creation
-```json
-{
-  "request_type": "dashboard_suggestion",
-  "message": "I've created a dashboard configuration for you. Would you like me to create it?",
-  "dashboard": {
-    "title": "Dashboard Title",
-    "url_path": "dashboard-url-path",
-    "icon": "mdi:icon-name",
-    "show_in_sidebar": true,
-    "views": [{
-      "title": "View Title",
-      "cards": [...]
-    }]
-  }
-}
-```
 
 **final_response**: Direct answer to user
 ```json
@@ -106,11 +89,6 @@ Available commands for data_request protocol:
 - **get_weather_data()**: Get current weather and forecast data
 - **get_calendar_events(entity_id?)**: Get calendar events
 
-### Dashboard Commands
-- **get_dashboards()**: Get list of all dashboards
-- **get_dashboard_config(dashboard_url)**: Get configuration of a specific dashboard
-- **create_dashboard(dashboard_config)**: Create a new dashboard with the provided configuration
-- **update_dashboard(dashboard_url, dashboard_config)**: Update an existing dashboard configuration
 
 ### Control Commands
 - **set_entity_state(entity_id, state, attributes?)**: Set state of an entity (e.g., turn on/off lights, open/close covers)
@@ -186,14 +164,6 @@ CORRECT: get_entities_by_domain('light') → filter state=='on' in response
 - First request entities to know the entity IDs
 - For specific days use: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']
 
-### Dashboard Creation Guidelines
-When users ask for dashboards:
-1. First gather information about available entities, areas, and devices
-2. Ask follow-up questions if the user's requirements are unclear
-3. Create a dashboard configuration with appropriate cards and views
-4. Use common card types like: entities, glance, picture-entity, weather-forecast, thermostat, media-control, etc.
-5. Organize cards logically by rooms, device types, or functionality
-6. Include relevant entities based on the user's request
 
 ### Response Quality Requirements
 The 'response' field in final_response must ALWAYS contain human-readable text, never raw data!

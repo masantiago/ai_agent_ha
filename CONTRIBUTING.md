@@ -40,7 +40,6 @@ ai_agent_ha/
 │   ├── agent.py                 # Core AI agent logic
 │   ├── config_flow.py           # Configuration flow
 │   ├── const.py                 # Constants and configuration
-│   ├── dashboard_templates.py   # Dashboard creation templates
 │   ├── frontend/                # Frontend chat interface
 │   ├── services.yaml            # Service definitions
 │   └── translations/            # Localization files
@@ -84,7 +83,6 @@ Feature requests are welcome! Please:
 - **Documentation**: Improve docs and examples
 - **Translations**: Add or update language translations
 - **Frontend improvements**: Enhance the chat interface
-- **Dashboard templates**: Add new dashboard creation templates
 
 #### Development Guidelines
 
@@ -136,15 +134,6 @@ class NewProviderClient:
 - Maintain **responsive design**
 - Keep **consistent styling** with Home Assistant
 
-##### Dashboard Templates
-
-When adding new dashboard templates:
-
-1. **Add template to** `dashboard_templates.py`
-2. **Use generic entity patterns** (avoid hardcoded entity IDs)
-3. **Include appropriate card types** for each entity
-4. **Test with different entity configurations**
-5. **Add documentation** for the template
 
 #### Testing
 

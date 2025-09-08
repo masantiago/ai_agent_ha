@@ -39,7 +39,6 @@ This guide provides information about the development workflow and technical asp
 - **agent.py**: Core AI agent logic and AI provider integration
 - **config_flow.py**: Configuration flow UI and logic
 - **const.py**: Constants and configuration options
-- **dashboard_templates.py**: Templates for dashboard creation
 - **frontend/**: Frontend UI components
 - **services.yaml**: Service definitions
 - **translations/**: Localization files
@@ -173,14 +172,7 @@ To add support for a new command pattern (e.g., a new type of automation):
 3. **Add handling code** in the agent logic
 4. **Test thoroughly** with various phrasings
 
-### Adding a New Dashboard Template
 
-To add a new dashboard template:
-
-1. **Create the template** in `dashboard_templates.py`
-2. **Design for flexibility** (avoid hardcoded entity IDs)
-3. **Add documentation** for the template
-4. **Test with different entity configurations**
 
 ### Troubleshooting Development Issues
 

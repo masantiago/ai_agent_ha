@@ -17,11 +17,101 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Multilingual confirmation messages
+CONFIRMATION_MESSAGES = {
+    "es": "Di 'sí' o 'créala' para crear esta automatización.",
+    "en": "Say 'yes' or 'create it' to create this automation.",
+    "fr": "Dites 'oui' ou 'créez-la' pour créer cette automatisation.",
+    "de": "Sagen Sie 'ja' oder 'erstellen' um diese Automatisierung zu erstellen.",
+    "it": "Di 'sì' o 'creala' per creare questa automazione.",
+    "pt": "Diga 'sim' ou 'criar' para criar esta automação."
+}
+
+# Multilingual success messages
+SUCCESS_MESSAGES = {
+    "es": "¡Automatización creada exitosamente!",
+    "en": "Automation created successfully!",
+    "fr": "Automatisation créée avec succès !",
+    "de": "Automatisierung erfolgreich erstellt!",
+    "it": "Automazione creata con successo!",
+    "pt": "Automação criada com sucesso!"
+}
+
+# Multilingual error messages
+ERROR_MESSAGES = {
+    "es": "Error al crear la automatización: {error}",
+    "en": "Error creating automation: {error}",
+    "fr": "Erreur lors de la création de l'automatisation : {error}",
+    "de": "Fehler beim Erstellen der Automatisierung: {error}",
+    "it": "Errore nella creazione dell'automazione: {error}",
+    "pt": "Erro ao criar automação: {error}"
+}
+
+# Multilingual cancellation messages
+CANCELLATION_MESSAGES = {
+    "es": "Creación de automatización cancelada.",
+    "en": "Automation creation cancelled.",
+    "fr": "Création d'automatisation annulée.",
+    "de": "Automatisierungserstellung abgebrochen.",
+    "it": "Creazione automazione annullata.",
+    "pt": "Criação de automação cancelada."
+}
+
+def detect_language_from_message(message: str) -> str:
+    """Detect language from message content."""
+    message_lower = message.lower()
+    
+    # Spanish indicators
+    spanish_indicators = ['automatización', 'interruptor', 'apagar', 'encender', 'todos los días', 
+                         'de la noche', 'de la mañana', 'tarde', 'noche', 'mañana', 'enciende', 
+                         'apaga', 'celia', 'salón', 'cocina', 'dormitorio', 'baño', 'luz', 'luces']
+    
+    # French indicators  
+    french_indicators = ['automatisation', 'interrupteur', 'éteindre', 'allumer', 'tous les jours',
+                        'du soir', 'du matin', 'lumière', 'lumières']
+    
+    # German indicators
+    german_indicators = ['automatisierung', 'schalter', 'ausschalten', 'einschalten', 'jeden tag',
+                        'abends', 'morgens', 'licht', 'lichter']
+    
+    # Italian indicators
+    italian_indicators = ['automazione', 'interruttore', 'spegnere', 'accendere', 'ogni giorno',
+                         'di sera', 'di mattina', 'luce', 'luci']
+    
+    # Portuguese indicators
+    portuguese_indicators = ['automação', 'interruptor', 'desligar', 'ligar', 'todos os dias',
+                           'da noite', 'da manhã', 'luz', 'luzes']
+    
+    # Count matches for each language
+    spanish_matches = sum(1 for indicator in spanish_indicators if indicator in message_lower)
+    french_matches = sum(1 for indicator in french_indicators if indicator in message_lower)
+    german_matches = sum(1 for indicator in german_indicators if indicator in message_lower)
+    italian_matches = sum(1 for indicator in italian_indicators if indicator in message_lower)
+    portuguese_matches = sum(1 for indicator in portuguese_indicators if indicator in message_lower)
+    
+    # Return language with most matches, default to English
+    max_matches = max(spanish_matches, french_matches, german_matches, italian_matches, portuguese_matches)
+    
+    if max_matches == 0:
+        return "en"  # Default to English
+    
+    if spanish_matches == max_matches:
+        return "es"
+    elif french_matches == max_matches:
+        return "fr"
+    elif german_matches == max_matches:
+        return "de"
+    elif italian_matches == max_matches:
+        return "it"
+    elif portuguese_matches == max_matches:
+        return "pt"
+    
+    return "en"  # Fallback to English
+
 # Official response types defined in agent.py SYSTEM_PROMPT
 OFFICIAL_REQUEST_TYPES = {
     "FINAL_RESPONSE": "final_response",
     "AUTOMATION_SUGGESTION": "automation_suggestion", 
-    "DASHBOARD_SUGGESTION": "dashboard_suggestion",
     "DATA_REQUEST": "data_request",
     "CALL_SERVICE": "call_service"
 }
@@ -77,6 +167,7 @@ class AutomationSuggestionHandler(BaseResponseHandler):
     def __init__(self, hass: HomeAssistant, integration_data: Dict[str, Any]):
         super().__init__(hass, integration_data)
         self._pending_automation = None
+        self._original_message = None  # Store original message to detect language
     
     def get_request_type(self) -> str:
         return OFFICIAL_REQUEST_TYPES["AUTOMATION_SUGGESTION"]
@@ -101,13 +192,26 @@ class AutomationSuggestionHandler(BaseResponseHandler):
         if description:
             response += f"\n{description}"
         
-        response += "\n\nSay 'yes' or 'create it' to create this automation."
+        # Detect language and add appropriate confirmation message
+        if self._original_message:
+            detected_language = detect_language_from_message(self._original_message)
+            confirmation_msg = CONFIRMATION_MESSAGES.get(detected_language, CONFIRMATION_MESSAGES["en"])
+        else:
+            confirmation_msg = CONFIRMATION_MESSAGES["en"]  # Default to English
+        
+        response += f"\n\n{confirmation_msg}"
         return response
     
     async def handle_confirmation(self) -> str:
         """Create the pending automation."""
         if not self._pending_automation:
             return "No automation to create."
+        
+        # Detect language for response messages
+        if self._original_message:
+            detected_language = detect_language_from_message(self._original_message)
+        else:
+            detected_language = "en"  # Default to English
         
         try:
             result = await self.hass.services.async_call(
@@ -119,72 +223,26 @@ class AutomationSuggestionHandler(BaseResponseHandler):
             self._pending_automation = None  # Clear after attempt
             
             if result and result.get("success"):
-                return "Automation created successfully!"
+                success_msg = SUCCESS_MESSAGES.get(detected_language, SUCCESS_MESSAGES["en"])
+                return success_msg
             else:
                 error = result.get("error", "Unknown error") if result else "No response"
-                return f"Error creating automation: {error}"
+                error_msg = ERROR_MESSAGES.get(detected_language, ERROR_MESSAGES["en"])
+                return error_msg.format(error=error)
                 
         except Exception as e:
             _LOGGER.error("Error creating automation: %s", e)
-            return f"Error creating automation: {e}"
+            error_msg = ERROR_MESSAGES.get(detected_language, ERROR_MESSAGES["en"])
+            return error_msg.format(error=str(e))
     
     def has_pending_confirmation(self) -> bool:
         return self._pending_automation is not None
+    
+    def set_original_message(self, message: str) -> None:
+        """Set the original message to detect language."""
+        self._original_message = message
 
 
-class DashboardSuggestionHandler(BaseResponseHandler):
-    """Handler for dashboard_suggestion type - official format from agent."""
-    
-    def __init__(self, hass: HomeAssistant, integration_data: Dict[str, Any]):
-        super().__init__(hass, integration_data)
-        self._pending_dashboard = None
-    
-    def get_request_type(self) -> str:
-        return OFFICIAL_REQUEST_TYPES["DASHBOARD_SUGGESTION"]
-    
-    async def handle(self, result: Dict[str, Any]) -> str:
-        """Handle dashboard suggestion according to official format."""
-        # Official format: {"request_type": "dashboard_suggestion", "message": "...", "dashboard": {...}}
-        message = result.get("message", "I've created a dashboard suggestion.")
-        dashboard = result.get("dashboard")
-        
-        if not dashboard:
-            return message
-        
-        # Store for confirmation
-        self._pending_dashboard = dashboard
-        
-        title = dashboard.get("title", "Dashboard")
-        response = f"{message}\n\n**{title}**"
-        response += "\n\nSay 'yes' or 'create it' to create this dashboard."
-        return response
-    
-    async def handle_confirmation(self) -> str:
-        """Create the pending dashboard."""
-        if not self._pending_dashboard:
-            return "No dashboard to create."
-        
-        try:
-            result = await self.hass.services.async_call(
-                DOMAIN, "create_dashboard",
-                {"dashboard_config": self._pending_dashboard},
-                blocking=True, return_response=True
-            )
-            
-            self._pending_dashboard = None  # Clear after attempt
-            
-            if result and result.get("success"):
-                return "Dashboard created successfully!"
-            else:
-                error = result.get("error", "Unknown error") if result else "No response"
-                return f"Error creating dashboard: {error}"
-                
-        except Exception as e:
-            _LOGGER.error("Error creating dashboard: %s", e)
-            return f"Error creating dashboard: {e}"
-    
-    def has_pending_confirmation(self) -> bool:
-        return self._pending_dashboard is not None
 
 
 class DataRequestHandler(BaseResponseHandler):
@@ -222,16 +280,18 @@ class AgentResponseProcessor:
         
         # Initialize handlers for confirmations
         self.automation_handler = AutomationSuggestionHandler(hass, integration_data)
-        self.dashboard_handler = DashboardSuggestionHandler(hass, integration_data)
         
         # Agent response handlers in order
         self.handlers = [
             FinalResponseHandler(hass, integration_data),
             self.automation_handler,
-            self.dashboard_handler,
             DataRequestHandler(hass, integration_data),
             CallServiceHandler(hass, integration_data)
         ]
+    
+    def set_original_message(self, message: str) -> None:
+        """Set the original message for language detection."""
+        self.automation_handler.set_original_message(message)
     
     async def process_response(self, result: Any) -> str:
         """Process response using official agent format specifications."""
@@ -279,24 +339,16 @@ class AgentResponseProcessor:
     def has_pending_automation(self) -> bool:
         return self.automation_handler.has_pending_confirmation()
     
-    def has_pending_dashboard(self) -> bool:
-        return self.dashboard_handler.has_pending_confirmation()
-    
     async def handle_automation_confirmation(self) -> str:
         return await self.automation_handler.handle_confirmation()
     
-    async def handle_dashboard_confirmation(self) -> str:
-        return await self.dashboard_handler.handle_confirmation()
-    
     def has_any_pending_confirmation(self) -> bool:
-        return self.has_pending_automation() or self.has_pending_dashboard()
+        return self.has_pending_automation()
     
     async def handle_confirmation(self) -> str:
         """Handle any type of pending confirmation."""
         if self.has_pending_automation():
             return await self.handle_automation_confirmation()
-        elif self.has_pending_dashboard():
-            return await self.handle_dashboard_confirmation()
         else:
             return "No pending confirmations."
 
@@ -368,7 +420,6 @@ class AIAgentConversation(conversation.ConversationEntity):
         
         _LOGGER.debug("Processing user input: '%s'", user_text)
         _LOGGER.debug("Has pending automation: %s", self._response_processor.automation_handler.has_pending_confirmation())
-        _LOGGER.debug("Has pending dashboard: %s", self._response_processor.dashboard_handler.has_pending_confirmation())
         
         # Check for automation confirmation
         if self._response_processor.automation_handler.has_pending_confirmation():
@@ -378,18 +429,19 @@ class AIAgentConversation(conversation.ConversationEntity):
                 return await self._response_processor.automation_handler.handle_confirmation()
             elif user_lower in ['no', 'cancel', 'cancelar', 'no gracias']:
                 _LOGGER.debug("Cancelled - clearing pending automation")
+                # Detect language for cancellation message
+                original_msg = self._response_processor.automation_handler._original_message
+                if original_msg:
+                    detected_language = detect_language_from_message(original_msg)
+                else:
+                    detected_language = "en"
+                
                 # Clear pending automation
                 self._response_processor.automation_handler._pending_automation = None
-                return "Automation creation cancelled."
-        
-        # Check for dashboard confirmation  
-        if self._response_processor.dashboard_handler.has_pending_confirmation():
-            if user_lower in ['yes', 'create it', 'sí', 'si', 'crear', 'crealo', 'créalo']:
-                return await self._response_processor.dashboard_handler.handle_confirmation()
-            elif user_lower in ['no', 'cancel', 'cancelar', 'no gracias']:
-                # Clear pending dashboard
-                self._response_processor.dashboard_handler._pending_dashboard = None
-                return "Dashboard creation cancelled."
+                
+                # Return localized cancellation message
+                cancellation_msg = CANCELLATION_MESSAGES.get(detected_language, CANCELLATION_MESSAGES["en"])
+                return cancellation_msg
         
         # No pending confirmations, process with AI agent
         return await self._process_with_ai_agent(user_text)
@@ -397,6 +449,9 @@ class AIAgentConversation(conversation.ConversationEntity):
     async def _process_with_ai_agent(self, message: str) -> str:
         """Process message using the existing AI Agent HA service."""
         try:
+            # Set the original message for language detection
+            self._response_processor.set_original_message(message)
+            
             # Call the existing ai_agent_ha.query service
             result = await self.hass.services.async_call(
                 DOMAIN,
@@ -428,6 +483,9 @@ class AIAgentConversation(conversation.ConversationEntity):
     async def _direct_ai_call(self, message: str) -> str:
         """Direct call to AI client as fallback."""
         try:
+            # Set the original message for language detection
+            self._response_processor.set_original_message(message)
+            
             # Try to get the agent directly from the stored data
             if "agent" in self._integration_data:
                 agent = self._integration_data["agent"]
