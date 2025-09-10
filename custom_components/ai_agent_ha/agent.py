@@ -22,6 +22,8 @@ ai_agent_ha:
 import asyncio
 import json
 import logging
+import os
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Union
@@ -855,6 +857,22 @@ class AiAgentHaAgent:
                     sanitized[key] = value
         return sanitized
 
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to be safe for filesystem."""
+        # Remove or replace unsafe characters
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        # Replace spaces and other whitespace with underscores
+        sanitized = re.sub(r'\s+', '_', sanitized)
+        # Remove consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        # Ensure it's not empty
+        if not sanitized:
+            sanitized = "automation"
+        # Limit length
+        return sanitized[:50]
+
     async def find_entity_by_name(self, search_term: str, domain: str = None) -> Optional[str]:
         """Find entity by searching friendly names and entity IDs."""
         search_lower = search_term.lower()
@@ -1408,32 +1426,32 @@ class AiAgentHaAgent:
                 "mode": sanitized_config.get("mode", "single"),
             }
 
-            # Read current automations.yaml using async executor
-            automations_path = self.hass.config.path("automations.yaml")
-            try:
-                current_automations = await self.hass.async_add_executor_job(
-                    lambda: yaml.safe_load(open(automations_path, "r")) or []
-                )
-            except FileNotFoundError:
-                current_automations = []
-
-            # Check for duplicate automation names
-            if any(
-                auto.get("alias") == automation_entry["alias"]
-                for auto in current_automations
+            # Generate filename based on timestamp and alias
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            sanitized_alias = self._sanitize_filename(sanitized_config["alias"])
+            filename = f"{timestamp}_{sanitized_alias}.yaml"
+            
+            # Ensure automations directory exists
+            automations_dir = self.hass.config.path("automations")
+            await self.hass.async_add_executor_job(
+                lambda: os.makedirs(automations_dir, exist_ok=True)
+            )
+            
+            automation_file_path = os.path.join(automations_dir, filename)
+            
+            # Check if file already exists (very unlikely with timestamp, but safety check)
+            if await self.hass.async_add_executor_job(
+                lambda: os.path.exists(automation_file_path)
             ):
                 return {
-                    "error": f"An automation with the name '{automation_entry['alias']}' already exists"
+                    "error": f"Automation file '{filename}' already exists"
                 }
 
-            # Append new automation
-            current_automations.append(automation_entry)
-
-            # Write back to file using async executor
+            # Write automation to individual file as array
             await self.hass.async_add_executor_job(
                 lambda: yaml.dump(
-                    current_automations,
-                    open(automations_path, "w"),
+                    [automation_entry],
+                    open(automation_file_path, "w"),
                     default_flow_style=False,
                 )
             )
@@ -1446,7 +1464,8 @@ class AiAgentHaAgent:
 
             return {
                 "success": True,
-                "message": f"Automation '{automation_entry['alias']}' created successfully",
+                "message": f"Automation '{automation_entry['alias']}' created successfully as {filename}",
+                "automation_path": automation_file_path,
             }
 
         except Exception as e:
