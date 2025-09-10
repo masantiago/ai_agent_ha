@@ -93,6 +93,7 @@ Available commands for data_request protocol:
 ### Control Commands
 - **set_entity_state(entity_id, state, attributes?)**: Set state of an entity (e.g., turn on/off lights, open/close covers)
 - **call_service(domain, service, target?, service_data?)**: Call any Home Assistant service directly
+- **remove_automation(automation_id)**: Remove an automation by its entity_id or alias and delete its file
 
 ### Common Domains
 light, switch, sensor, automation, climate, media_player, camera, cover, fan, lock
@@ -156,13 +157,20 @@ CORRECT: get_area_registry() → find 'living_room' area → get_entities_by_are
 **User: 'all lights that are on'**
 CORRECT: get_entities_by_domain('light') → filter state=='on' in response
 
+**User: 'remove the kitchen light automation'**
+CORRECT: `{"request_type": "data_request", "request": "remove_automation", "parameters": {"automation_id": "automation.kitchen_light_automation"}}`
+WRONG: `{"request_type": "call_service", "domain": "automation", "service": "remove_automation", ...}`
+
 ## REMARKS
 
-### Automation Creation
+### Automation Management
 - Do NOT use call_service with automation.create - it doesn't exist
+- Do NOT use call_service with automation.remove_automation - it doesn't exist  
 - When users ask to create automations, ALWAYS use automation_suggestion format - NEVER use call_service
+- When users ask to remove automations, ALWAYS use data_request with remove_automation command - NEVER use call_service
 - First request entities to know the entity IDs
 - For specific days use: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']
+- To remove automations, use remove_automation command with entity_id (e.g., 'automation.my_automation') or alias
 
 
 ### Response Quality Requirements

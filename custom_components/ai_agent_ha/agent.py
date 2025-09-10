@@ -1472,6 +1472,122 @@ class AiAgentHaAgent:
             _LOGGER.exception("Error creating automation: %s", str(e))
             return {"error": f"Error creating automation: {str(e)}"}
 
+    async def remove_automation(self, automation_id: str) -> Dict[str, Any]:
+        """Remove an automation by entity_id or alias and delete its file."""
+        try:
+            _LOGGER.debug("Removing automation: %s", automation_id)
+
+            # Get all automations to find the target
+            automations = await self.get_automations()
+            if isinstance(automations, list) and len(automations) > 0 and "error" in automations[0]:
+                return automations[0]  # Return error from get_automations
+
+            target_automation = None
+            
+            # Search by entity_id or alias
+            for automation in automations:
+                entity_id = automation.get("entity_id", "")
+                alias = automation.get("attributes", {}).get("friendly_name", "")
+                
+                if (entity_id == automation_id or 
+                    alias == automation_id or
+                    entity_id == f"automation.{automation_id}"):
+                    target_automation = automation
+                    break
+
+            if not target_automation:
+                return {"error": f"Automation '{automation_id}' not found"}
+
+            # Get the automation's entity_id for service call
+            entity_id = target_automation.get("entity_id")
+            automation_alias = target_automation.get("attributes", {}).get("friendly_name", "")
+
+            # First, turn off the automation to unregister it from Home Assistant
+            try:
+                await self.hass.services.async_call(
+                    "automation",
+                    "turn_off",
+                    {"entity_id": entity_id}
+                )
+            except Exception as e:
+                _LOGGER.warning("Could not turn off automation %s: %s", entity_id, str(e))
+
+            # Find and delete the automation file
+            automations_dir = self.hass.config.path("automations")
+            automation_file_deleted = False
+            
+            if await self.hass.async_add_executor_job(lambda: os.path.exists(automations_dir)):
+                # Search for files containing this automation
+                for filename in await self.hass.async_add_executor_job(lambda: os.listdir(automations_dir)):
+                    if not filename.endswith('.yaml'):
+                        continue
+                        
+                    file_path = os.path.join(automations_dir, filename)
+                    try:
+                        # Read and parse the automation file
+                        with open(file_path, 'r') as f:
+                            file_content = yaml.safe_load(f)
+                            
+                        if isinstance(file_content, list):
+                            # Check if any automation in this file matches
+                            for automation in file_content:
+                                if (automation.get("alias") == automation_alias or
+                                    automation.get("id", "").endswith(automation_id.replace("automation.", ""))):
+                                    # Delete the entire file
+                                    await self.hass.async_add_executor_job(lambda: os.remove(file_path))
+                                    automation_file_deleted = True
+                                    _LOGGER.info("Deleted automation file: %s", filename)
+                                    break
+                                    
+                        if automation_file_deleted:
+                            break
+                            
+                    except Exception as e:
+                        _LOGGER.warning("Error reading automation file %s: %s", filename, str(e))
+                        continue
+
+            # Reload automations to remove it from Home Assistant registry
+            await self.hass.services.async_call("automation", "reload")
+            
+            # Additional step: Remove the entity from the Entity Registry if it still exists
+            try:
+                from homeassistant.helpers import entity_registry as er
+                entity_registry = er.async_get(self.hass)
+                
+                # Try multiple times to remove the entity from registry (it may take time after reload)
+                for attempt in range(3):
+                    await asyncio.sleep(0.5 * (attempt + 1))  # Wait increasingly longer
+                    
+                    entity_entry = entity_registry.async_get(entity_id)
+                    if entity_entry:
+                        _LOGGER.info("Removing entity %s from registry (attempt %d)", entity_id, attempt + 1)
+                        entity_registry.async_remove(entity_id)
+                        break
+                    else:
+                        # Entity already removed from registry
+                        break
+                    
+            except Exception as e:
+                _LOGGER.warning("Could not remove entity %s from registry: %s", entity_id, str(e))
+
+            # Clear automation-related caches
+            self._cache.clear()
+
+            if automation_file_deleted:
+                return {
+                    "success": True,
+                    "message": f"Automation '{automation_alias}' removed successfully and file deleted"
+                }
+            else:
+                return {
+                    "success": True,
+                    "message": f"Automation '{automation_alias}' unregistered from Home Assistant (file not found or could not be deleted)"
+                }
+
+        except Exception as e:
+            _LOGGER.exception("Error removing automation: %s", str(e))
+            return {"error": f"Error removing automation: {str(e)}"}
+
 
 
     async def process_query(
@@ -1812,6 +1928,10 @@ class AiAgentHaAgent:
                             elif request_type == "create_automation":
                                 data = await self.create_automation(
                                     parameters.get("automation")
+                                )
+                            elif request_type == "remove_automation":
+                                data = await self.remove_automation(
+                                    parameters.get("automation_id")
                                 )
                             else:
                                 data = {
