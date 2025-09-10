@@ -1990,28 +1990,6 @@ class AiAgentHaAgent:
                             result = response_data
                             self._set_cached_data(cache_key, result)
                             return result
-                        elif (
-                            response_data.get("request_type") == "automation_suggestion"
-                        ):
-                            # Add automation suggestion to conversation history
-                            self.conversation_history.append(
-                                {
-                                    "role": "assistant",
-                                    "content": json.dumps(
-                                        response_data
-                                    ),  # Store clean JSON
-                                }
-                            )
-
-                            # Return automation suggestion with structured format
-                            _LOGGER.debug(
-                                "Received automation suggestion: %s",
-                                json.dumps(response_data.get("automation")),
-                            )
-                            # Return the complete structured response for conversation.py
-                            result = response_data
-                            self._set_cached_data(cache_key, result)
-                            return result
                         elif response_data.get("request_type") in [
                             "get_entities",
                             "get_entities_by_area",
@@ -2064,28 +2042,28 @@ class AiAgentHaAgent:
                             target = response_data.get("target", {})
                             service_data = response_data.get("service_data", {})
                             
-                            # Check for invalid automation.create calls and convert them to automation_suggestion
+                            # Check for invalid automation.create calls and convert them to create_automation
                             if domain == "automation" and service == "create":
-                                _LOGGER.warning("AI attempted to use invalid automation.create service call - converting to automation_suggestion format")
+                                _LOGGER.warning("AI attempted to use invalid automation.create service call - converting to create_automation format")
                                 
-                                # Convert service_data to automation_suggestion format
+                                # Convert service_data to create_automation format
                                 automation_data = service_data
                                 
-                                # Create proper automation_suggestion response
-                                converted_response = {
-                                    "request_type": "automation_suggestion",
-                                    "message": "I've created an automation that might help you. Would you like me to create it?",
-                                    "automation": automation_data
-                                }
+                                # Create the automation directly
+                                automation_result = await self.create_automation(automation_data)
                                 
-                                # Add to conversation history
-                                self.conversation_history.append({
-                                    "role": "assistant", 
-                                    "content": json.dumps(converted_response)
-                                })
+                                # Return appropriate response
+                                if automation_result.get("success"):
+                                    result = {
+                                        "success": True,
+                                        "response": automation_result.get("message", "Automation created successfully")
+                                    }
+                                else:
+                                    result = {
+                                        "success": False,
+                                        "response": automation_result.get("error", "Failed to create automation")
+                                    }
                                 
-                                # Return the converted response
-                                result = converted_response
                                 self._set_cached_data(cache_key, result)
                                 return result
 
@@ -2309,23 +2287,6 @@ class AiAgentHaAgent:
                                     "Could not save debug file: %s", str(debug_error)
                                 )
 
-                        # Check if this looks like a corrupted automation suggestion
-                        if (
-                            response.strip().startswith(
-                                '{"request_type": "automation_suggestion'
-                            )
-                            and len(response) > 10000
-                            and response.count("for its use in various fields") > 50
-                        ):
-                            _LOGGER.warning(
-                                "Detected corrupted automation suggestion response with repetitive text"
-                            )
-                            result = {
-                                "success": False,
-                                "error": "AI generated corrupted automation response. Please try again with a more specific automation request.",
-                            }
-                            self._set_cached_data(cache_key, result)
-                            return result
 
                         # If response is not valid JSON, try to wrap it as a final response
                         try:
@@ -2593,7 +2554,7 @@ class AiAgentHaAgent:
             # Check for invalid automation.create calls
             if domain == "automation" and service == "create":
                 _LOGGER.error("Invalid automation.create service call detected - automation.create service does not exist")
-                return {"error": "automation.create service does not exist. Use automation_suggestion format instead."}
+                return {"error": "automation.create service does not exist. Use create_automation command instead."}
 
             # Call the service
             await self.hass.services.async_call(domain, service, call_data)

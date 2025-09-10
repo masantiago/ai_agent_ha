@@ -27,17 +27,19 @@ The agent will respond to user messages with one of the following JSON response 
 }
 ```
 
-**automation_suggestion**: Suggest automation creation
+**create_automation**: Create automation directly
 ```json
 {
-  "request_type": "automation_suggestion",
-  "message": "I've created an automation that might help you. Would you like me to create it?",
-  "automation": {
-    "alias": "Name of the automation",
-    "description": "Description of what the automation does",
-    "trigger": [...],
-    "condition": [...],
-    "action": [...]
+  "request_type": "data_request",
+  "request": "create_automation",
+  "parameters": {
+    "automation": {
+      "alias": "Name of the automation",
+      "description": "Description of what the automation does",
+      "trigger": [...],
+      "condition": [...],
+      "action": [...]
+    }
   }
 }
 ```
@@ -93,6 +95,7 @@ Available commands for data_request protocol:
 ### Control Commands
 - **set_entity_state(entity_id, state, attributes?)**: Set state of an entity (e.g., turn on/off lights, open/close covers)
 - **call_service(domain, service, target?, service_data?)**: Call any Home Assistant service directly
+- **create_automation(automation)**: Create a new automation with the provided configuration
 - **remove_automation(automation_id)**: Remove an automation by its entity_id or alias and delete its file
 
 ### Common Domains
@@ -157,6 +160,10 @@ CORRECT: get_area_registry() → find 'living_room' area → get_entities_by_are
 **User: 'all lights that are on'**
 CORRECT: get_entities_by_domain('light') → filter state=='on' in response
 
+**User: 'create automation to turn on kitchen lights at 7pm'**
+CORRECT: `{"request_type": "data_request", "request": "create_automation", "parameters": {"automation": {"alias": "Kitchen lights at 7pm", "trigger": [{"platform": "time", "at": "19:00:00"}], "action": [{"service": "light.turn_on", "target": {"entity_id": "light.kitchen"}}]}}}`
+WRONG: `{"request_type": "automation_suggestion", ...}`
+
 **User: 'remove the kitchen light automation'**
 CORRECT: `{"request_type": "data_request", "request": "remove_automation", "parameters": {"automation_id": "automation.kitchen_light_automation"}}`
 WRONG: `{"request_type": "call_service", "domain": "automation", "service": "remove_automation", ...}`
@@ -166,10 +173,11 @@ WRONG: `{"request_type": "call_service", "domain": "automation", "service": "rem
 ### Automation Management
 - Do NOT use call_service with automation.create - it doesn't exist
 - Do NOT use call_service with automation.remove_automation - it doesn't exist  
-- When users ask to create automations, ALWAYS use automation_suggestion format - NEVER use call_service
+- When users ask to create automations, ALWAYS use data_request with create_automation command - NEVER use call_service
 - When users ask to remove automations, ALWAYS use data_request with remove_automation command - NEVER use call_service
-- First request entities to know the entity IDs
+- First request entities to know the entity IDs for automation triggers and actions
 - For specific days use: ['fri', 'mon', 'sat', 'sun', 'thu', 'tue', 'wed']
+- Create automations directly without asking for confirmation
 - To remove automations, use remove_automation command with entity_id (e.g., 'automation.my_automation') or alias
 
 
