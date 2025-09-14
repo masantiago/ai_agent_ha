@@ -199,6 +199,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"Error creating automation: {e}")
             return {"error": str(e)}
 
+    async def async_handle_remove_automation(call):
+        """Handle the remove_automation service call."""
+        try:
+            # Check if agents are available
+            if DOMAIN not in hass.data or not hass.data[DOMAIN].get("agents"):
+                _LOGGER.error(
+                    "No AI agents available. Please configure the integration first."
+                )
+                return {"error": "No AI agents configured"}
+
+            provider = call.data.get("provider")
+            if provider not in hass.data[DOMAIN]["agents"]:
+                # Get the first available provider
+                available_providers = list(hass.data[DOMAIN]["agents"].keys())
+                if not available_providers:
+                    _LOGGER.error("No AI agents available")
+                    return {"error": "No AI agents configured"}
+                provider = available_providers[0]
+                _LOGGER.debug(f"Using fallback provider: {provider}")
+
+            agent = hass.data[DOMAIN]["agents"][provider]
+            result = await agent.remove_automation(call.data.get("automation_id", ""))
+            return result
+        except Exception as e:
+            _LOGGER.error(f"Error removing automation: {e}")
+            return {"error": str(e)}
+
 
 
     # Register services with return_response support for conversation agent
@@ -217,6 +244,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, 
         "create_automation", 
         async_handle_create_automation,
+        supports_response=SupportsResponse.OPTIONAL
+    )
+    
+    hass.services.async_register(
+        DOMAIN, 
+        "remove_automation", 
+        async_handle_remove_automation,
+        schema=vol.Schema({
+            vol.Required("automation_id"): cv.string,
+            vol.Optional("provider"): cv.string,
+        }),
         supports_response=SupportsResponse.OPTIONAL
     )
     
@@ -244,6 +282,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not remaining_entries:
         hass.services.async_remove(DOMAIN, "query")
         hass.services.async_remove(DOMAIN, "create_automation")
+        hass.services.async_remove(DOMAIN, "remove_automation")
 
     # Remove entry data
     if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
